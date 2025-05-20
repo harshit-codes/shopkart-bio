@@ -22,6 +22,11 @@ ShopKart.bio is an open-source e-commerce platform that allows users to create t
 - **Deployment**: Vercel (Frontend), Appwrite Cloud (Backend)
 - **Version Control**: Git, GitHub
 
+## Documentation
+
+- [Installation Guide](docs/installation.md)
+- [Appwrite Setup Guide](docs/appwrite-setup.md)
+
 ## Getting Started
 
 ### Prerequisites
@@ -64,9 +69,10 @@ ShopKart.bio is an open-source e-commerce platform that allows users to create t
 shopkart-bio/
 ├── app/             # Next.js app directory structure
 ├── components/      # Reusable UI components
+├── context/         # React contexts
 ├── lib/             # Utility functions and shared logic
 ├── public/          # Static assets
-├── styles/          # Global styles
+├── docs/            # Documentation
 └── types/           # TypeScript type definitions
 ```
 
