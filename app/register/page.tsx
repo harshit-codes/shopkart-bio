@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { createUserAccount } from "@/lib/auth";
@@ -17,7 +17,40 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
-  const { signIn } = useAuth();
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get("callbackUrl");
+  const { checkAuthUser, isRateLimited, rateLimitWaitTime, signIn, user, isAuthenticated } = useAuth();
+  const [countdown, setCountdown] = useState(0);
+  
+  // Redirect authenticated users
+  useEffect(() => {
+    if (isAuthenticated && user && user.username) {
+      // Redirect to callback URL if provided, otherwise to user profile
+      if (callbackUrl) {
+        router.push(callbackUrl);
+      } else {
+        router.push(`/${user.username}`);
+      }
+    }
+  }, [isAuthenticated, user, router, callbackUrl]);
+  
+  // Set up countdown timer when rate limited
+  useEffect(() => {
+    if (isRateLimited && rateLimitWaitTime > 0) {
+      setCountdown(rateLimitWaitTime);
+      const timer = setInterval(() => {
+        setCountdown(prevCount => {
+          if (prevCount <= 1) {
+            clearInterval(timer);
+            return 0;
+          }
+          return prevCount - 1;
+        });
+      }, 1000);
+      
+      return () => clearInterval(timer);
+    }
+  }, [isRateLimited, rateLimitWaitTime]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -27,6 +60,12 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    
+    // If rate limited, show message and prevent submission
+    if (isRateLimited && countdown > 0) {
+      setError(`Too many requests. Please try again in ${countdown} seconds.`);
+      return;
+    }
 
     // Validate form
     if (formData.password !== formData.confirmPassword) {
@@ -39,23 +78,90 @@ export default function RegisterPage() {
       return;
     }
 
+    // Additional password strength validation
+    const hasUpperCase = /[A-Z]/.test(formData.password);
+    const hasLowerCase = /[a-z]/.test(formData.password);
+    const hasNumbers = /\d/.test(formData.password);
+    const hasSpecialChars = /[!@#$%^&*(),.?":{}|<>]/.test(formData.password);
+    
+    if (!(hasUpperCase && hasLowerCase && (hasNumbers || hasSpecialChars))) {
+      setError("Password must contain uppercase and lowercase letters, and at least one number or special character");
+      return;
+    }
+
     try {
       setIsLoading(true);
+      console.log("Starting registration process...");
+      
       // Create user account
-      await createUserAccount({
+      const newUser = await createUserAccount({
         name: formData.name,
         email: formData.email,
         password: formData.password,
       });
+      
+      console.log("User account created:", newUser);
 
-      // Sign in after registration
-      await signIn(formData.email, formData.password);
-      router.push("/dashboard");
+      // Add a longer delay before checking authentication
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Check if user is authenticated after registration
+      console.log("Checking if user is authenticated...");
+      let isUserAuthenticated = await checkAuthUser();
+      console.log("First authentication check result:", isUserAuthenticated);
+      
+      // If first check fails, try again after a delay
+      if (!isUserAuthenticated) {
+        console.log("First auth check failed, waiting and trying again...");
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        isUserAuthenticated = await checkAuthUser();
+        console.log("Second authentication check result:", isUserAuthenticated);
+      }
+
+      if (isUserAuthenticated) {
+        console.log("User authenticated, redirecting to profile");
+        // Redirect to user profile using username
+        if (user && user.username) {
+          router.push(`/${user.username}`);
+        } else {
+          // Fallback in case username is not available yet
+          router.push("/");
+        }
+      } else {
+        console.log("Authentication check failed, trying direct sign-in");
+        
+        // If the automatic authentication check failed, try signing in manually
+        try {
+          // Add a delay before trying to sign in
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          await signIn(formData.email, formData.password);
+          // signIn will handle redirection if successful
+        } catch (signInError) {
+          console.error("Manual sign-in failed:", signInError);
+          
+          // If manual sign-in fails, but account was created
+          if (newUser && newUser.$id) {
+            throw new Error("Account created successfully! Please try signing in on the login page.");
+          }
+          
+          throw new Error("Registration successful but could not sign you in automatically. Please try signing in manually.");
+        }
+      }
     } catch (error: any) {
       console.error("Registration error:", error);
-      setError(
-        error?.message || "Registration failed. Please try again."
-      );
+      if (error?.message?.includes("rate limit") || error?.message?.includes("Rate limit")) {
+        setError(`Too many registration attempts. Please try again in ${countdown || 30} seconds.`);
+      } else if (error?.message?.includes("already exists")) {
+        setError("An account with this email already exists. Please sign in instead.");
+      } else if (error?.message?.includes("Registration successful but could not sign you in")) {
+        // This is a partial success - the account was created
+        setError("Your account was created successfully, but we couldn't sign you in automatically. Please go to the login page and sign in with your credentials.");
+      } else if (error?.message?.includes("Sign in failed")) {
+        setError("Your account was created but we couldn't sign you in. Please try again on the login page.");
+      } else {
+        setError(error?.message || "Registration failed. Please try again.");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -73,6 +179,24 @@ export default function RegisterPage() {
           {error && (
             <div className="rounded-md bg-destructive/15 p-3 text-center text-sm text-destructive">
               {error}
+            </div>
+          )}
+          
+          {isRateLimited && countdown > 0 && (
+            <div className="rounded-md bg-amber-50 p-4 mb-4">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-amber-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <h3 className="text-sm font-medium text-amber-800">Rate limit exceeded</h3>
+                  <div className="mt-2 text-sm text-amber-700">
+                    <p>Too many registration attempts. Please try again in {countdown} seconds.</p>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -121,6 +245,9 @@ export default function RegisterPage() {
               value={formData.password}
               onChange={handleChange}
             />
+            <p className="text-xs text-muted-foreground">
+              Must be at least 8 characters with uppercase and lowercase letters, and at least one number or special character
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -141,9 +268,9 @@ export default function RegisterPage() {
           <Button
             type="submit"
             className="w-full"
-            disabled={isLoading}
+            disabled={isLoading || (isRateLimited && countdown > 0)}
           >
-            {isLoading ? "Creating account..." : "Sign up"}
+            {isLoading ? "Creating account..." : (isRateLimited && countdown > 0) ? `Try again in ${countdown}s` : "Sign up"}
           </Button>
         </form>
 

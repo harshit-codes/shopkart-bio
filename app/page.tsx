@@ -1,7 +1,32 @@
+"use client";
+
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/context/AuthContext";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 export default function Home() {
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const router = useRouter();
+
+  // Redirect authenticated users to their profile page
+  useEffect(() => {
+    if (isAuthenticated && user && user.username) {
+      router.push(`/${user.username}`);
+    }
+  }, [isAuthenticated, router, user]);
+
+  // If loading or authenticated, show loading state
+  if (isLoading || isAuthenticated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-lg">Loading...</p>
+      </div>
+    );
+  }
+
+  // Show landing page for unauthenticated users
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-6 md:p-24">
       <div className="max-w-3xl text-center space-y-6">
